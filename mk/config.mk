@@ -378,8 +378,8 @@ CFG_TEE_CORE_EMBED_INTERNAL_TESTS ?= y
 # with specific core number and non-secure entry address.
 CFG_BOOT_SECONDARY_REQUEST ?= n
 
-# Default heap size for Core, 64 kB
-CFG_CORE_HEAP_SIZE ?= 65536
+# Default heap size for Core, 256 kB for Shadow-box
+CFG_CORE_HEAP_SIZE ?= 262144
 
 # Default size of nexus heap. 16 kB. Used only if CFG_VIRTUALIZATION
 # is enabled
