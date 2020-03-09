@@ -148,6 +148,8 @@
  */
 #define OPTEE_RPC_CMD_BENCH_REG		20
 
+#define OPTEE_RPC_CMD_OCALL		    50
+
 /*
  * Definition of protocol for command OPTEE_RPC_CMD_FS
  */

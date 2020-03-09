@@ -70,6 +70,7 @@
 #define TEE_ORIGIN_COMMS                0x00000002
 #define TEE_ORIGIN_TEE                  0x00000003
 #define TEE_ORIGIN_TRUSTED_APP          0x00000004
+#define TEE_ORIGIN_CLIENT_APP           0x00000005
 
 /* Property Sets pseudo handles */
 #define TEE_PROPSET_TEE_IMPLEMENTATION  (TEE_PropSetHandle)0xFFFFFFFD
