@@ -13,7 +13,7 @@
  * TA Interface:
  * -------------
  * params[0]: VALUE IN/OUT
- *   IN: < HOST CMD ID, Num Params>
+ *   IN: < HOST CMD ID,  Param Types   >
  *  OUT: < CMD Ret Val, CMD Ret Origin >
  * params[1]: < [INOUT] TEE_Param[] >
  * params[2]: < - >
@@ -35,14 +35,13 @@
 static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 				TEE_Param params[TEE_NUM_PARAMS])
 {
-	const uint32_t exp_pt = TEE_PARAM_TYPES(
-		TEE_PARAM_TYPE_VALUE_INOUT,
-		TEE_PARAM_TYPE_MEMREF_INOUT,
-		TEE_PARAM_TYPE_NONE,
-		TEE_PARAM_TYPE_NONE);
+	const uint32_t pt1 = TEE_PARAM_TYPE_GET(param_types, 0);
+	const uint32_t pt2 = TEE_PARAM_TYPE_GET(param_types, 1);
+	const uint32_t pt3 = TEE_PARAM_TYPE_GET(param_types, 2);
+	const uint32_t pt4 = TEE_PARAM_TYPE_GET(param_types, 3);
 
 	uint32_t ca_cmd_id;
-	uint32_t ca_num_params;
+	uint32_t ca_param_types;
 
 	TEE_Param *ca_params;
 	size_t ca_params_size;
@@ -55,35 +54,36 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 	TEE_Result res;
 
 	/* Check TA interface parameter types */
-	if (param_types != exp_pt) {
-		EMSG("Invalid parameter types: %u, %u", exp_pt, param_types);
+	if (pt1 != TEE_PARAM_TYPE_VALUE_INOUT ||
+		!(pt2 == TEE_PARAM_TYPE_NONE || pt2 == TEE_PARAM_TYPE_MEMREF_INOUT) ||
+		pt3 != TEE_PARAM_TYPE_NONE ||
+		pt4 != TEE_PARAM_TYPE_NONE) {
+		EMSG("Invalid parameter types: %u, %u, %u, %u", pt1, pt2, pt3, pt4);
 		return TEE_ERROR_BAD_PARAMETERS;
 	}
 
 	/* Extract the parameters from the TA interface */
 	ca_cmd_id = params[0].value.a;
-	ca_num_params = params[0].value.b;
-	ca_params = (TEE_Param *)params[1].memref.buffer;
-	ca_params_size = params[1].memref.size;
-	ca_params_expected_size = sizeof(*ca_params) * ca_num_params;
+	if (pt2 == TEE_PARAM_TYPE_MEMREF_INOUT) {
+		ca_param_types = params[0].value.b;
+		ca_params = (TEE_Param *)params[1].memref.buffer;
+		ca_params_size = params[1].memref.size;
+		ca_params_expected_size = sizeof(*ca_params) * TEE_NUM_PARAMS;
 
-	/* Check TA interface parameters */
-	if (ca_num_params > THREAD_RPC_MAX_NUM_PARAMS) {
-		EMSG("Invalid CA parameter count: %u", ca_num_params);
-		return TEE_ERROR_BAD_PARAMETERS;
-	}
-	if (ca_params_size != ca_params_expected_size) {
-		EMSG("Invalid CA parameters: %u, %u", ca_params_expected_size,
-			ca_params_size);
-		return TEE_ERROR_BAD_PARAMETERS;
-	}
-	if (!ca_params && ca_params_size > 0) {
-		EMSG("Null CA parameters with non-zero CA parameters buffer size");
-		return TEE_ERROR_BAD_PARAMETERS;
+		/* Check TA interface parameters */
+		if (ca_params_size != ca_params_expected_size) {
+			EMSG("Invalid CA parameters: %u, %u", ca_params_expected_size,
+				ca_params_size);
+			return TEE_ERROR_BAD_PARAMETERS;
+		}
+		if (!ca_params) {
+			EMSG("Null CA parameters");
+			return TEE_ERROR_BAD_PARAMETERS;
+		}
 	}
 
 	/* Set up the parameters for the RPC interface */
-	rpc_params[0] = THREAD_PARAM_VALUE(INOUT, ca_cmd_id, ca_num_params, 0);
+	rpc_params[0] = THREAD_PARAM_VALUE(INOUT, ca_cmd_id, 0, 0);
 	rpc_params[1] = THREAD_PARAM_VALUE(IN, 0, 0, 0);
 	tee_uuid_to_octets((uint8_t *)&rpc_params[1].u.value, &s->clnt_id.uuid);
 
