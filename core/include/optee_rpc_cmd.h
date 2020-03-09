@@ -98,6 +98,8 @@
  */
 #define OPTEE_RPC_SHM_TYPE_GLOBAL	2
 
+#define OPTEE_RPC_SHM_TYPE_CLIENT_APP	3
+
 /*
  * Free shared memory previously allocated with OPTEE_RPC_CMD_SHM_ALLOC
  *

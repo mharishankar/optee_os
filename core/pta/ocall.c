@@ -9,6 +9,43 @@
 #pragma GCC push_options
 #pragma GCC optimize ("-O0")
 
+static TEE_Result ocall_compute_required_mobj_size(uint32_t param_types,
+				TEE_Param params[TEE_NUM_PARAMS], size_t *required_size)
+{
+	TEE_Param *param;
+	uint32_t param_type;
+	size_t n;
+	size_t size = 0;
+
+	for (n = 0 ; n < TEE_NUM_PARAMS ; n++) {
+		param = params + n;
+		param_type = TEE_PARAM_TYPE_GET(param_types, n);
+
+		switch (param_type)
+		{
+		case TEE_PARAM_TYPE_NONE:
+			break;
+		case TEE_PARAM_TYPE_VALUE_INPUT:
+		case TEE_PARAM_TYPE_VALUE_INOUT:
+		case TEE_PARAM_TYPE_VALUE_OUTPUT:
+			if (ADD_OVERFLOW(size, sizeof(param->value), &size))
+				return TEE_ERROR_SECURITY;
+			break;
+		case TEE_PARAM_TYPE_MEMREF_INPUT:
+		case TEE_PARAM_TYPE_MEMREF_INOUT:
+		case TEE_PARAM_TYPE_MEMREF_OUTPUT:
+			if (ADD_OVERFLOW(size, param->memref.size, &size))
+				return TEE_ERROR_SECURITY;
+			break;
+		default:
+			return TEE_ERROR_BAD_PARAMETERS;
+		}
+	}
+
+	*required_size = size;
+	return TEE_SUCCESS;
+}
+
 /*
  * TA Interface:
  * -------------
@@ -41,11 +78,14 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 	const uint32_t pt4 = TEE_PARAM_TYPE_GET(param_types, 3);
 
 	uint32_t ca_cmd_id;
-	uint32_t ca_param_types;
+	uint32_t ca_param_types = 0;
 
 	TEE_Param *ca_params;
 	size_t ca_params_size;
 	size_t ca_params_expected_size;
+
+	struct mobj *mobj;
+	size_t mobj_sz = 0;
 
 	uint32_t ca_cmd_ret;
 	uint32_t ca_cmd_ret_origin;
@@ -64,6 +104,8 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 
 	/* Extract the parameters from the TA interface */
 	ca_cmd_id = params[0].value.a;
+
+	/* Process OCALL parameters, if any */
 	if (pt2 == TEE_PARAM_TYPE_MEMREF_INOUT) {
 		ca_param_types = params[0].value.b;
 		ca_params = (TEE_Param *)params[1].memref.buffer;
@@ -72,7 +114,7 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 
 		/* Check TA interface parameters */
 		if (ca_params_size != ca_params_expected_size) {
-			EMSG("Invalid CA parameters: %u, %u", ca_params_expected_size,
+			EMSG("Invalid CA parameters: %zu, %zu", ca_params_expected_size,
 				ca_params_size);
 			return TEE_ERROR_BAD_PARAMETERS;
 		}
@@ -80,10 +122,21 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 			EMSG("Null CA parameters");
 			return TEE_ERROR_BAD_PARAMETERS;
 		}
+
+		/* Compute how much memory the CA must allocate for the OCALL params */
+		res = ocall_compute_required_mobj_size(ca_param_types, ca_params,
+			&mobj_sz);
+		if (res != TEE_SUCCESS)
+			return res;
+
+		/* Unless all OCALL params are TYPE_NONE, some memory is necessary */
+		if (mobj_sz) {
+			mobj = thread_rpc_alloc_client_app_payload(mobj_sz);
+		}
 	}
 
 	/* Set up the parameters for the RPC interface */
-	rpc_params[0] = THREAD_PARAM_VALUE(INOUT, ca_cmd_id, 0, 0);
+	rpc_params[0] = THREAD_PARAM_VALUE(INOUT, ca_cmd_id, ca_param_types, 0);
 	rpc_params[1] = THREAD_PARAM_VALUE(IN, 0, 0, 0);
 	tee_uuid_to_octets((uint8_t *)&rpc_params[1].u.value, &s->clnt_id.uuid);
 

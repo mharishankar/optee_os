@@ -674,6 +674,10 @@ struct mobj *thread_rpc_alloc_global_payload(size_t size);
  */
 void thread_rpc_free_global_payload(struct mobj *mobj);
 
+struct mobj *thread_rpc_alloc_client_app_payload(size_t size);
+
+void thread_rpc_free_client_app_payload(struct mobj *mobj);
+
 #endif /*__ASSEMBLER__*/
 
 #endif /*KERNEL_THREAD_H*/
