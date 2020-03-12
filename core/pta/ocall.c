@@ -1,5 +1,6 @@
 #include <kernel/pseudo_ta.h>
 #include <kernel/thread.h>
+#include <mm/mobj.h>
 #include <optee_rpc_cmd.h>
 #include <pta_ocall.h>
 #include <tee/uuid.h>
@@ -24,12 +25,9 @@ static TEE_Result ocall_compute_required_mobj_size(uint32_t param_types,
 		switch (param_type)
 		{
 		case TEE_PARAM_TYPE_NONE:
-			break;
 		case TEE_PARAM_TYPE_VALUE_INPUT:
 		case TEE_PARAM_TYPE_VALUE_INOUT:
 		case TEE_PARAM_TYPE_VALUE_OUTPUT:
-			if (ADD_OVERFLOW(size, sizeof(param->value), &size))
-				return TEE_ERROR_SECURITY;
 			break;
 		case TEE_PARAM_TYPE_MEMREF_INPUT:
 		case TEE_PARAM_TYPE_MEMREF_INOUT:
@@ -43,6 +41,100 @@ static TEE_Result ocall_compute_required_mobj_size(uint32_t param_types,
 	}
 
 	*required_size = size;
+	return TEE_SUCCESS;
+}
+
+static TEE_Result ocall_pre_process_params(struct thread_param *rpc_params,
+				TEE_Param *ca_params, uint32_t ca_param_types,
+				struct mobj *mobj, void *mobj_va)
+{
+	size_t n;
+	size_t mobj_offs = 0;
+
+	for (n = 0; n < TEE_NUM_PARAMS; n++) {
+		TEE_Param *ca_param = ca_params + n;
+		uint32_t ca_pt = TEE_PARAM_TYPE_GET(ca_param_types, n);
+
+		switch (ca_pt)
+		{
+		case TEE_PARAM_TYPE_NONE:
+			rpc_params[n + 2].attr = THREAD_PARAM_ATTR_NONE;
+			break;
+		case TEE_PARAM_TYPE_VALUE_INPUT:
+			rpc_params[n + 2] = THREAD_PARAM_VALUE(IN, ca_param->value.a,
+				ca_param->value.b, 0);
+			break;
+		case TEE_PARAM_TYPE_VALUE_INOUT:
+			rpc_params[n + 2] = THREAD_PARAM_VALUE(INOUT, ca_param->value.a,
+				ca_param->value.b, 0);
+			break;
+		case TEE_PARAM_TYPE_VALUE_OUTPUT:
+			rpc_params[n + 2] = THREAD_PARAM_VALUE(OUT, ca_param->value.a,
+				ca_param->value.b, 0);
+			break;
+		case TEE_PARAM_TYPE_MEMREF_INPUT:
+			memcpy(mobj_va + mobj_offs, ca_param->memref.buffer,
+				ca_param->memref.size);
+			rpc_params[n + 2] = THREAD_PARAM_MEMREF(IN, mobj, mobj_offs,
+				ca_param->memref.size);
+			mobj_offs += ca_param->memref.size;
+			break;
+		case TEE_PARAM_TYPE_MEMREF_INOUT:
+			memcpy(mobj_va + mobj_offs, ca_param->memref.buffer,
+				ca_param->memref.size);
+			rpc_params[n + 2] = THREAD_PARAM_MEMREF(INOUT, mobj, mobj_offs,
+				ca_param->memref.size);
+			mobj_offs += ca_param->memref.size;
+			break;
+		case TEE_PARAM_TYPE_MEMREF_OUTPUT:
+			memcpy(mobj_va + mobj_offs, ca_param->memref.buffer,
+				ca_param->memref.size);
+			rpc_params[n + 2] = THREAD_PARAM_MEMREF(OUT, mobj, mobj_offs,
+				ca_param->memref.size);
+			mobj_offs += ca_param->memref.size;
+			break;
+		default:
+			return TEE_ERROR_BAD_PARAMETERS;
+		}
+	}
+
+	return TEE_SUCCESS;
+}
+
+static TEE_Result ocall_post_process_params(struct thread_param *rpc_params,
+				TEE_Param *ca_params, uint32_t ca_param_types,
+				struct mobj *mobj, void *mobj_va)
+{
+	size_t n;
+	size_t mobj_offs = 0;
+
+	for (n = 0; n < TEE_NUM_PARAMS; n++) {
+		TEE_Param *ca_param = ca_params + n;
+		uint32_t ca_pt = TEE_PARAM_TYPE_GET(ca_param_types, n);
+
+		switch (ca_pt) {
+			case TEE_PARAM_TYPE_NONE:
+			case TEE_PARAM_TYPE_VALUE_INPUT:
+			case TEE_PARAM_TYPE_MEMREF_INPUT:
+				break;
+			case TEE_PARAM_TYPE_VALUE_INOUT:
+			case TEE_PARAM_TYPE_VALUE_OUTPUT:
+				ca_param->value.a = rpc_params[n + 2].u.value.a;
+				ca_param->value.b = rpc_params[n + 2].u.value.b;
+				break;
+			case TEE_PARAM_TYPE_MEMREF_INOUT:
+			case TEE_PARAM_TYPE_MEMREF_OUTPUT:
+				if (rpc_params[n + 2].u.memref.size > ca_param->memref.size)
+					return TEE_ERROR_BAD_PARAMETERS;
+				memcpy(ca_param->memref.buffer, mobj_va + mobj_offs,
+					rpc_params[n + 2].u.memref.size);
+				mobj_offs += ca_param->memref.size;
+				break;
+			default:
+				return TEE_ERROR_BAD_PARAMETERS;
+		}
+	}
+
 	return TEE_SUCCESS;
 }
 
@@ -80,17 +172,19 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 	uint32_t ca_cmd_id;
 	uint32_t ca_param_types = 0;
 
-	TEE_Param *ca_params;
+	TEE_Param *ca_params = NULL;
 	size_t ca_params_size;
 	size_t ca_params_expected_size;
 
-	struct mobj *mobj;
+	struct mobj *mobj = NULL;
 	size_t mobj_sz = 0;
+	void *mobj_va;
 
 	uint32_t ca_cmd_ret;
 	uint32_t ca_cmd_ret_origin;
 
-	struct thread_param rpc_params[2];
+	size_t n;
+	struct thread_param rpc_params[THREAD_RPC_MAX_NUM_PARAMS];
 	TEE_Result res;
 
 	/* Check TA interface parameter types */
@@ -132,6 +226,14 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 		/* Unless all OCALL params are TYPE_NONE, some memory is necessary */
 		if (mobj_sz) {
 			mobj = thread_rpc_alloc_client_app_payload(mobj_sz);
+			if (!mobj)
+				return TEE_ERROR_OUT_OF_MEMORY;
+
+			mobj_va = mobj_get_va(mobj, 0);
+			if (!mobj_va) {
+				res = TEE_ERROR_GENERIC;
+				goto exit;
+			}
 		}
 	}
 
@@ -139,13 +241,27 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 	rpc_params[0] = THREAD_PARAM_VALUE(INOUT, ca_cmd_id, ca_param_types, 0);
 	rpc_params[1] = THREAD_PARAM_VALUE(IN, 0, 0, 0);
 	tee_uuid_to_octets((uint8_t *)&rpc_params[1].u.value, &s->clnt_id.uuid);
+	if (ca_params) {
+		res = ocall_pre_process_params(rpc_params, ca_params, ca_param_types,
+			mobj, mobj_va);
+		if (res != TEE_SUCCESS)
+			goto exit;
+	}
 
 	/* Send RPC for OCALL */
 	res = thread_rpc_cmd(OPTEE_RPC_CMD_OCALL, ARRAY_SIZE(rpc_params),
 		rpc_params);
 	if (res != TEE_SUCCESS) {
 		EMSG("RPC failed with 0x%x", res);
-		return res;
+		goto exit;
+	}
+
+	/* Extract parameters */
+	if (ca_params) {
+		res = ocall_post_process_params(rpc_params, ca_params, ca_param_types,
+			mobj, mobj_va);
+		if (res != TEE_SUCCESS)
+			goto exit;
 	}
 
 	/* Extract CA return values */
@@ -155,6 +271,10 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 	/* Set output parameters */
 	params[0].value.a = ca_cmd_ret;
 	params[0].value.b = ca_cmd_ret_origin;
+
+exit:
+	if (mobj)
+		thread_rpc_free_client_app_payload(mobj);
 
 	return res;
 }
