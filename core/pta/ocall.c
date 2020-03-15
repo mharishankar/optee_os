@@ -117,12 +117,17 @@ static TEE_Result post_process_params(struct thread_param *rpc_params,
 		switch (ca_pt) {
 			case TEE_PARAM_TYPE_NONE:
 			case TEE_PARAM_TYPE_VALUE_INPUT:
-			case TEE_PARAM_TYPE_MEMREF_INPUT:
 				break;
 			case TEE_PARAM_TYPE_VALUE_INOUT:
 			case TEE_PARAM_TYPE_VALUE_OUTPUT:
 				ca_param->value.a = rpc_params[n].u.value.a;
 				ca_param->value.b = rpc_params[n].u.value.b;
+				break;
+			case TEE_PARAM_TYPE_MEMREF_INPUT:
+				if (rpc_params[n].u.memref.size !=
+					ca_param->memref.size)
+					return TEE_ERROR_BAD_PARAMETERS;
+				mobj_offs += ca_param->memref.size;
 				break;
 			case TEE_PARAM_TYPE_MEMREF_INOUT:
 			case TEE_PARAM_TYPE_MEMREF_OUTPUT:
@@ -132,6 +137,8 @@ static TEE_Result post_process_params(struct thread_param *rpc_params,
 				memcpy(ca_param->memref.buffer,
 					PTR_ADD(mobj_va, mobj_offs),
 					rpc_params[n].u.memref.size);
+				ca_param->memref.size =
+					rpc_params[n].u.memref.size;
 				mobj_offs += ca_param->memref.size;
 				break;
 			default:
