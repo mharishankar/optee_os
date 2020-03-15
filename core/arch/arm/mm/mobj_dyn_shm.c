@@ -33,7 +33,7 @@ static size_t shm_release_waiters;
 
 struct mobj_reg_shm {
 	struct mobj mobj;
-	SLIST_ENTRY(mobj_reg_shm) next;
+	STAILQ_ENTRY(mobj_reg_shm) next;
 	uint64_t cookie;
 	tee_mm_entry_t *mm;
 	paddr_t page_offset;
@@ -55,8 +55,8 @@ static size_t mobj_reg_shm_size(size_t nr_pages)
 	return s;
 }
 
-static SLIST_HEAD(reg_shm_head, mobj_reg_shm) reg_shm_list =
-	SLIST_HEAD_INITIALIZER(reg_shm_head);
+static STAILQ_HEAD(reg_shm_head, mobj_reg_shm) reg_shm_list =
+	STAILQ_HEAD_INITIALIZER(reg_shm_list);
 
 static unsigned int reg_shm_slist_lock = SPINLOCK_UNLOCK;
 static unsigned int reg_shm_map_lock = SPINLOCK_UNLOCK;
@@ -129,7 +129,7 @@ static void reg_shm_free_helper(struct mobj_reg_shm *mobj_reg_shm)
 
 	cpu_spin_unlock_xrestore(&reg_shm_map_lock, exceptions);
 
-	SLIST_REMOVE(&reg_shm_list, mobj_reg_shm, mobj_reg_shm, next);
+	STAILQ_REMOVE(&reg_shm_list, mobj_reg_shm, mobj_reg_shm, next);
 	free(mobj_reg_shm);
 }
 
@@ -254,7 +254,7 @@ struct mobj *mobj_reg_shm_alloc(paddr_t *pages, size_t num_pages,
 	}
 
 	exceptions = cpu_spin_lock_xsave(&reg_shm_slist_lock);
-	SLIST_INSERT_HEAD(&reg_shm_list, mobj_reg_shm, next);
+	STAILQ_INSERT_TAIL(&reg_shm_list, mobj_reg_shm, next);
 	cpu_spin_unlock_xrestore(&reg_shm_slist_lock, exceptions);
 
 	return &mobj_reg_shm->mobj;
@@ -275,7 +275,7 @@ static struct mobj_reg_shm *reg_shm_find_unlocked(uint64_t cookie)
 {
 	struct mobj_reg_shm *mobj_reg_shm = NULL;
 
-	SLIST_FOREACH(mobj_reg_shm, &reg_shm_list, next)
+	STAILQ_FOREACH(mobj_reg_shm, &reg_shm_list, next)
 		if (mobj_reg_shm->cookie == cookie)
 			return mobj_reg_shm;
 
