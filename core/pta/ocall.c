@@ -17,6 +17,7 @@ static TEE_Result compute_required_mobj_size(uint32_t param_types,
 	uint32_t param_type;
 	size_t n;
 	size_t size = 0;
+	size_t alloc_size;
 
 	for (n = 0 ; n < TEE_NUM_PARAMS ; n++) {
 		param = params + n;
@@ -32,7 +33,10 @@ static TEE_Result compute_required_mobj_size(uint32_t param_types,
 		case TEE_PARAM_TYPE_MEMREF_INPUT:
 		case TEE_PARAM_TYPE_MEMREF_INOUT:
 		case TEE_PARAM_TYPE_MEMREF_OUTPUT:
-			if (ADD_OVERFLOW(size, param->memref.size, &size))
+			alloc_size = param->memref.size
+			    ? param->memref.size
+			    : 8;
+			if (ADD_OVERFLOW(alloc_size, param->memref.size, &size))
 				return TEE_ERROR_SECURITY;
 			break;
 		default:
@@ -44,6 +48,17 @@ static TEE_Result compute_required_mobj_size(uint32_t param_types,
 	return TEE_SUCCESS;
 }
 
+#define CHECK_AND_SET(x) 						       \
+	if ((!ca_param->memref.size && ca_param->memref.buffer) || 	       \
+	    (!ca_param->memref.buffer && ca_param->memref.size)) 	       \
+		return TEE_ERROR_BAD_PARAMETERS; 			       \
+	if (ca_param->memref.buffer) 					       \
+		memcpy(PTR_ADD(mobj_va, mobj_offs),			       \
+			ca_param->memref.buffer, ca_param->memref.size);       \
+	alloc_size = ca_param->memref.size ? ca_param->memref.size : 8;	       \
+	rpc_params[n] = THREAD_PARAM_MEMREF(x, mobj, mobj_offs, alloc_size);\
+	mobj_offs += alloc_size;
+
 static TEE_Result pre_process_params(struct thread_param *rpc_params,
 				     TEE_Param *ca_params,
 				     uint32_t ca_param_types,
@@ -51,6 +66,7 @@ static TEE_Result pre_process_params(struct thread_param *rpc_params,
 {
 	size_t n;
 	size_t mobj_offs = 0;
+	size_t alloc_size;
 
 	for (n = 0; n < TEE_NUM_PARAMS; n++) {
 		TEE_Param *ca_param = ca_params + n;
@@ -74,25 +90,13 @@ static TEE_Result pre_process_params(struct thread_param *rpc_params,
 				ca_param->value.a, ca_param->value.b, 0);
 			break;
 		case TEE_PARAM_TYPE_MEMREF_INPUT:
-			memcpy(PTR_ADD(mobj_va, mobj_offs),
-				ca_param->memref.buffer, ca_param->memref.size);
-			rpc_params[n] = THREAD_PARAM_MEMREF(IN, mobj, mobj_offs,
-				ca_param->memref.size);
-			mobj_offs += ca_param->memref.size;
+			CHECK_AND_SET(IN)
 			break;
 		case TEE_PARAM_TYPE_MEMREF_INOUT:
-			memcpy(PTR_ADD(mobj_va, mobj_offs),
-				ca_param->memref.buffer, ca_param->memref.size);
-			rpc_params[n] = THREAD_PARAM_MEMREF(INOUT, mobj,
-				mobj_offs, ca_param->memref.size);
-			mobj_offs += ca_param->memref.size;
+			CHECK_AND_SET(INOUT)
 			break;
 		case TEE_PARAM_TYPE_MEMREF_OUTPUT:
-			memcpy(PTR_ADD(mobj_va, mobj_offs),
-				ca_param->memref.buffer, ca_param->memref.size);
-			rpc_params[n] = THREAD_PARAM_MEMREF(OUT, mobj,
-				mobj_offs, ca_param->memref.size);
-			mobj_offs += ca_param->memref.size;
+			CHECK_AND_SET(OUT)
 			break;
 		default:
 			return TEE_ERROR_BAD_PARAMETERS;
@@ -194,6 +198,7 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 	uint32_t ca_cmd_ret_origin;
 
 	struct thread_param rpc_params[THREAD_RPC_MAX_NUM_PARAMS];
+	size_t rpc_num_params;
 
 	TEE_Result res;
 
@@ -249,11 +254,13 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 			ca_param_types, mobj, mobj_va);
 		if (res != TEE_SUCCESS)
 			goto exit;
+		rpc_num_params = ARRAY_SIZE(rpc_params);
+	} else {
+		rpc_num_params = 2;
 	}
 
 	/* Send RPC for OCALL */
-	res = thread_rpc_cmd(OPTEE_RPC_CMD_OCALL, ARRAY_SIZE(rpc_params),
-		rpc_params);
+	res = thread_rpc_cmd(OPTEE_RPC_CMD_OCALL, rpc_num_params, rpc_params);
 	if (res != TEE_SUCCESS) {
 		EMSG("RPC failed with 0x%x", res);
 		goto exit;
