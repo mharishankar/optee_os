@@ -10,9 +10,16 @@
 #include <types_ext.h>
 #include <user_ta_header.h>
 #include <utee_syscalls.h>
+#if defined(CFG_OCALL)
+#include "pta_ocall.h"
+#endif
 #include "tee_api_private.h"
 
 static const void *tee_api_instance_data;
+
+#if defined(CFG_OCALL)
+TEE_TASessionHandle tee_api_ocall_session = NULL;
+#endif
 
 /* System API - Internal Client API */
 
@@ -230,6 +237,63 @@ out:
 
 	return res;
 }
+
+#if defined(CFG_OCALL)
+TEE_Result TEE_InvokeCACommand(uint32_t cancellationRequestTimeout,
+			       uint32_t commandID, uint32_t paramTypes,
+			       TEE_Param params[TEE_NUM_PARAMS],
+			       uint32_t *returnOrigin)
+{
+	TEE_UUID uuid = PTA_UUID;
+
+	const uint32_t pt = TEE_PARAM_TYPES(
+		TEE_PARAM_TYPE_VALUE_INOUT,
+		params ? TEE_PARAM_TYPE_MEMREF_INOUT : TEE_PARAM_TYPE_NONE,
+		TEE_PARAM_TYPE_NONE,
+		TEE_PARAM_TYPE_NONE);
+
+	TEE_Param rpc_params[TEE_NUM_PARAMS] = { 0 };
+
+	uint32_t eorig;
+	TEE_Result res;
+
+	/* Open TA2TA session with the OCALL PTA, if necessary */
+	if (!tee_api_ocall_session) {
+		res = TEE_OpenTASession(&uuid, TEE_TIMEOUT_INFINITE, 0, NULL,
+			&tee_api_ocall_session, &eorig);
+		if (res != TEE_SUCCESS) {
+			eorig = TEE_ORIGIN_COMMS;
+			goto exit;
+		}
+	}
+
+	/* Set up the TA interface for the OCALL PTA */
+	rpc_params[0].value.a = commandID;
+	if (params) {
+		rpc_params[0].value.b = paramTypes;
+		rpc_params[1].memref.buffer = params;
+		rpc_params[1].memref.size = sizeof(*params) * TEE_NUM_PARAMS;
+	}
+
+	/* Send the OCALL request to the OCALL PTA */
+	res = TEE_InvokeTACommand(tee_api_ocall_session,
+		cancellationRequestTimeout, PTA_OCALL_SEND, pt, rpc_params,
+		&eorig);
+	if (res != TEE_SUCCESS) {
+		eorig = TEE_ORIGIN_TEE;
+		goto exit;
+	}
+
+	/* Extract the OCALL return value and error origin */
+	res = rpc_params[0].value.a;
+	eorig = rpc_params[0].value.b;
+
+exit:
+	if (returnOrigin)
+		*returnOrigin = eorig;
+	return res;
+}
+#endif /*CFG_OCALL*/
 
 /* System API - Cancellations */
 

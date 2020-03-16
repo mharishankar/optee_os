@@ -31,6 +31,11 @@ extern uint8_t ta_heap[];
 extern const size_t ta_heap_size;
 extern struct ta_head ta_head;
 
+#if defined(CFG_OCALL)
+/* From tee_api.c */
+extern TEE_TASessionHandle tee_api_ocall_session;
+#endif
+
 uint32_t ta_param_types;
 TEE_Param ta_params[TEE_NUM_PARAMS];
 struct __init_fini_info __init_fini_info;
@@ -254,6 +259,11 @@ static TEE_Result entry_close_session(unsigned long session_id)
 		return TEE_ERROR_BAD_STATE;
 
 	TA_CloseSessionEntryPoint(session->session_ctx);
+
+#if defined(CFG_OCALL)
+	if (tee_api_ocall_session)
+		TEE_CloseTASession(tee_api_ocall_session);
+#endif
 
 	ta_header_remove_session(session_id);
 	return TEE_SUCCESS;
