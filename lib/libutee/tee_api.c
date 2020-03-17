@@ -293,6 +293,15 @@ exit:
 		*returnOrigin = eorig;
 	return res;
 }
+#else
+TEE_Result TEE_InvokeCACommand(uint32_t cancellationRequestTimeout __unused,
+			       uint32_t commandID __unused,
+			       uint32_t paramTypes __unused,
+			       TEE_Param params[TEE_NUM_PARAMS] __unused,
+			       uint32_t *returnOrigin __unused)
+{
+	return TEE_ERROR_NOT_SUPPORTED;
+}
 #endif /*CFG_OCALL*/
 
 /* System API - Cancellations */
