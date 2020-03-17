@@ -35,7 +35,7 @@ TEE_Result TEE_CacheFlush(char *buf, size_t len);
 TEE_Result TEE_CacheInvalidate(char *buf, size_t len);
 
 /*
- * Send an OCALL to the Client Applicant.
+ * Send an OCALL to the Client Application.
  *
  * The semantics are identical to TEEC_InvokeCommand, but in the opposite
  * direction.

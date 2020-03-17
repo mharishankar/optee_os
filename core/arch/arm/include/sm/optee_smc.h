@@ -277,7 +277,7 @@
 /* Secure world is built with virtualization support */
 #define OPTEE_SMC_SEC_CAP_VIRTUALIZATION	(1 << 3)
 /* Secure world is built with OCALL support */
-#define OPTEE_SMC_SEC_CAP_OCALL				(1 << 4)
+#define OPTEE_SMC_SEC_CAP_OCALL			(1 << 4)
 
 
 #define OPTEE_SMC_FUNCID_EXCHANGE_CAPABILITIES	9
