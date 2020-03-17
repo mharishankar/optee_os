@@ -261,10 +261,8 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 
 	/* Send RPC for OCALL */
 	res = thread_rpc_cmd(OPTEE_RPC_CMD_OCALL, rpc_num_params, rpc_params);
-	if (res != TEE_SUCCESS) {
-		EMSG("RPC failed with 0x%x", res);
+	if (res != TEE_SUCCESS)
 		goto exit;
-	}
 
 	/* Extract OCALL parameters */
 	if (ca_params) {
@@ -284,7 +282,6 @@ static TEE_Result ocall_send(struct tee_ta_session *s, uint32_t param_types,
 
 exit:
 	if (mobj) {
-		/* If the CA died, we can only clean up on our side */
 		if (res == TEE_ERROR_TARGET_DEAD)
 			mobj_put(mobj);
 		else
