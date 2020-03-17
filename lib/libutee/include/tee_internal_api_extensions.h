@@ -37,8 +37,8 @@ TEE_Result TEE_CacheInvalidate(char *buf, size_t len);
 /*
  * Send an OCALL to the Client Application.
  *
- * The semantics are identical to TEEC_InvokeCommand, but in the opposite
- * direction.
+ * The semantics are identical to TEEC_InvokeCommand, except that memory
+ * references with size zero are not supported, in the opposite direction.
  */
 TEE_Result TEE_InvokeCACommand(uint32_t cancellationRequestTimeout,
 			       uint32_t commandID, uint32_t paramTypes,

@@ -17,7 +17,6 @@ static TEE_Result compute_required_mobj_size(uint32_t param_types,
 	uint32_t param_type;
 	size_t n;
 	size_t size = 0;
-	size_t alloc_size;
 
 	for (n = 0 ; n < TEE_NUM_PARAMS ; n++) {
 		param = params + n;
@@ -33,10 +32,10 @@ static TEE_Result compute_required_mobj_size(uint32_t param_types,
 		case TEE_PARAM_TYPE_MEMREF_INPUT:
 		case TEE_PARAM_TYPE_MEMREF_INOUT:
 		case TEE_PARAM_TYPE_MEMREF_OUTPUT:
-			alloc_size = param->memref.size
-			    ? param->memref.size
-			    : 8;
-			if (ADD_OVERFLOW(alloc_size, param->memref.size, &size))
+			if ((param->memref.buffer && !param->memref.size) ||
+			    (!param->memref.buffer && param->memref.size))
+				return TEE_ERROR_BAD_PARAMETERS;
+			if (ADD_OVERFLOW(size, param->memref.size, &size))
 				return TEE_ERROR_SECURITY;
 			break;
 		default:
@@ -48,16 +47,14 @@ static TEE_Result compute_required_mobj_size(uint32_t param_types,
 	return TEE_SUCCESS;
 }
 
-#define CHECK_AND_SET(x) 						       \
-	if ((!ca_param->memref.size && ca_param->memref.buffer) || 	       \
-	    (!ca_param->memref.buffer && ca_param->memref.size)) 	       \
-		return TEE_ERROR_BAD_PARAMETERS; 			       \
+#define MEMREF_CHECK_AND_SET_RPC(x) 					       \
 	if (ca_param->memref.buffer) 					       \
-		memcpy(PTR_ADD(mobj_va, mobj_offs),			       \
-			ca_param->memref.buffer, ca_param->memref.size);       \
-	alloc_size = ca_param->memref.size ? ca_param->memref.size : 8;	       \
-	rpc_params[n] = THREAD_PARAM_MEMREF(x, mobj, mobj_offs, alloc_size);\
-	mobj_offs += alloc_size;
+		memcpy(PTR_ADD(mobj_va, mobj_offs), ca_param->memref.buffer,   \
+		       ca_param->memref.size);				       \
+	rpc_params[n] = THREAD_PARAM_MEMREF(x, mobj, mobj_offs, 	       \
+		ca_param->memref.size);					       \
+	if (ADD_OVERFLOW(mobj_offs, ca_param->memref.size, &mobj_offs))	       \
+		return TEE_ERROR_SECURITY;
 
 static TEE_Result pre_process_params(struct thread_param *rpc_params,
 				     TEE_Param *ca_params,
@@ -66,7 +63,6 @@ static TEE_Result pre_process_params(struct thread_param *rpc_params,
 {
 	size_t n;
 	size_t mobj_offs = 0;
-	size_t alloc_size;
 
 	for (n = 0; n < TEE_NUM_PARAMS; n++) {
 		TEE_Param *ca_param = ca_params + n;
@@ -90,13 +86,13 @@ static TEE_Result pre_process_params(struct thread_param *rpc_params,
 				ca_param->value.a, ca_param->value.b, 0);
 			break;
 		case TEE_PARAM_TYPE_MEMREF_INPUT:
-			CHECK_AND_SET(IN)
+			MEMREF_CHECK_AND_SET_RPC(IN)
 			break;
 		case TEE_PARAM_TYPE_MEMREF_INOUT:
-			CHECK_AND_SET(INOUT)
+			MEMREF_CHECK_AND_SET_RPC(INOUT)
 			break;
 		case TEE_PARAM_TYPE_MEMREF_OUTPUT:
-			CHECK_AND_SET(OUT)
+			MEMREF_CHECK_AND_SET_RPC(OUT)
 			break;
 		default:
 			return TEE_ERROR_BAD_PARAMETERS;
@@ -119,34 +115,36 @@ static TEE_Result post_process_params(struct thread_param *rpc_params,
 		uint32_t ca_pt = TEE_PARAM_TYPE_GET(ca_param_types, n);
 
 		switch (ca_pt) {
-			case TEE_PARAM_TYPE_NONE:
-			case TEE_PARAM_TYPE_VALUE_INPUT:
-				break;
-			case TEE_PARAM_TYPE_VALUE_INOUT:
-			case TEE_PARAM_TYPE_VALUE_OUTPUT:
-				ca_param->value.a = rpc_params[n].u.value.a;
-				ca_param->value.b = rpc_params[n].u.value.b;
-				break;
-			case TEE_PARAM_TYPE_MEMREF_INPUT:
-				if (rpc_params[n].u.memref.size !=
-					ca_param->memref.size)
-					return TEE_ERROR_BAD_PARAMETERS;
-				mobj_offs += ca_param->memref.size;
-				break;
-			case TEE_PARAM_TYPE_MEMREF_INOUT:
-			case TEE_PARAM_TYPE_MEMREF_OUTPUT:
-				if (rpc_params[n].u.memref.size >
-				    ca_param->memref.size)
-					return TEE_ERROR_BAD_PARAMETERS;
-				memcpy(ca_param->memref.buffer,
-					PTR_ADD(mobj_va, mobj_offs),
-					rpc_params[n].u.memref.size);
-				ca_param->memref.size =
-					rpc_params[n].u.memref.size;
-				mobj_offs += ca_param->memref.size;
-				break;
-			default:
+		case TEE_PARAM_TYPE_NONE:
+		case TEE_PARAM_TYPE_VALUE_INPUT:
+			break;
+		case TEE_PARAM_TYPE_VALUE_INOUT:
+		case TEE_PARAM_TYPE_VALUE_OUTPUT:
+			ca_param->value.a = rpc_params[n].u.value.a;
+			ca_param->value.b = rpc_params[n].u.value.b;
+			break;
+		case TEE_PARAM_TYPE_MEMREF_INPUT:
+			if (rpc_params[n].u.memref.size !=
+			    ca_param->memref.size)
 				return TEE_ERROR_BAD_PARAMETERS;
+			if (ADD_OVERFLOW(mobj_offs, rpc_params[n].u.memref.size,
+					 &mobj_offs))
+				return TEE_ERROR_SECURITY;
+			break;
+		case TEE_PARAM_TYPE_MEMREF_INOUT:
+		case TEE_PARAM_TYPE_MEMREF_OUTPUT:
+			if (rpc_params[n].u.memref.size > ca_param->memref.size)
+				return TEE_ERROR_BAD_PARAMETERS;
+			memcpy(ca_param->memref.buffer,
+				PTR_ADD(mobj_va, mobj_offs),
+				rpc_params[n].u.memref.size);
+			ca_param->memref.size = rpc_params[n].u.memref.size;
+			if (ADD_OVERFLOW(mobj_offs, rpc_params[n].u.memref.size,
+					 &mobj_offs))
+				return TEE_ERROR_SECURITY;
+			break;
+		default:
+			return TEE_ERROR_BAD_PARAMETERS;
 		}
 	}
 
