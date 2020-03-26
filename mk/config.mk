@@ -579,3 +579,10 @@ CFG_SCMI_MSG_DRIVERS ?= n
 CFG_SCMI_MSG_CLOCK ?= n
 CFG_SCMI_MSG_RESET_DOMAIN ?= n
 CFG_SCMI_MSG_SMT ?= n
+
+# Enables support for OCALLs, allowing TAs to invoke commands on their CA.
+# Since OCALLs are implemented in the System PTA, the latter is a prerequisite.
+CFG_OCALL ?= y
+ifeq ($(CFG_OCALL),y)
+$(call force,CFG_SYSTEM_PTA,y)
+endif

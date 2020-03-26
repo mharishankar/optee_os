@@ -3,6 +3,7 @@
  * Copyright (c) 2014, STMicroelectronics International N.V.
  */
 #include <compiler.h>
+#include <config.h>
 #include <stdbool.h>
 #include <string.h>
 #include <sys/queue.h>
@@ -84,6 +85,8 @@ static void uninit_instance(void)
 {
 	__utee_gprof_fini();
 	TA_DestroyEntryPoint();
+	if (tee_api_system_session)
+		TEE_CloseTASession(tee_api_system_session);
 	__utee_call_elf_fini_fn();
 }
 
