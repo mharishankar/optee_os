@@ -10,9 +10,12 @@
 #include <types_ext.h>
 #include <user_ta_header.h>
 #include <utee_syscalls.h>
+#include "pta_system.h"
 #include "tee_api_private.h"
 
 static const void *tee_api_instance_data;
+
+TEE_TASessionHandle tee_api_system_session;
 
 /* System API - Internal Client API */
 
@@ -230,6 +233,135 @@ out:
 
 	return res;
 }
+
+#ifdef CFG_OCALL
+TEE_Result TEE_InvokeCACommand(uint32_t cancellationRequestTimeout,
+			       uint32_t commandID, uint32_t paramTypes,
+			       TEE_Param params[TEE_NUM_PARAMS],
+			       uint32_t *returnOrigin)
+{
+	const TEE_UUID uuid = PTA_SYSTEM_UUID;
+	TEE_Result res = TEE_SUCCESS;
+	uint32_t ret_origin = TEE_ORIGIN_TEE;
+	struct utee_params pta_up = { };
+	struct utee_params ocall_up = { };
+	void *buffer = NULL;
+	size_t size = 0;
+	size_t n = 0;
+
+	/* Open session with the System PTA, if necessary */
+	if (!tee_api_system_session) {
+		res = TEE_OpenTASession(&uuid, TEE_TIMEOUT_INFINITE, 0, NULL,
+					&tee_api_system_session, &ret_origin);
+		/* The System PTA is optional */
+		if (res == TEE_ERROR_ITEM_NOT_FOUND &&
+		    ret_origin == TEE_ORIGIN_TEE) {
+			res = TEE_ERROR_NOT_SUPPORTED;
+			ret_origin = TEE_ORIGIN_API;
+		}
+		if (res)
+			goto exit;
+	}
+
+	/* Convert the OCALL's parameters into a utee_params structure */
+	ocall_up.types = paramTypes;
+	for (n = 0; n < TEE_NUM_PARAMS; n++) {
+		switch (TEE_PARAM_TYPE_GET(paramTypes, n)) {
+		case TEE_PARAM_TYPE_VALUE_INPUT:
+		case TEE_PARAM_TYPE_VALUE_INOUT:
+			ocall_up.vals[n * 2] = params[n].value.a;
+			ocall_up.vals[n * 2 + 1] = params[n].value.b;
+			break;
+		case TEE_PARAM_TYPE_MEMREF_INPUT:
+		case TEE_PARAM_TYPE_MEMREF_OUTPUT:
+		case TEE_PARAM_TYPE_MEMREF_INOUT:
+			buffer = params[n].memref.buffer;
+			size = params[n].memref.size;
+			if ((buffer && !size) || (!buffer && size)) {
+				res = TEE_ERROR_BAD_PARAMETERS;
+				ret_origin = TEE_ORIGIN_API;
+				goto exit;
+			}
+			ocall_up.vals[n * 2] = (vaddr_t)buffer;
+			ocall_up.vals[n * 2 + 1] = size;
+			break;
+		default:
+			break;
+		}
+	}
+
+	/* Construct the parameters for the call to the PTA */
+	pta_up.vals[0] = commandID;
+	pta_up.vals[2] = (uintptr_t)&ocall_up;
+	pta_up.vals[3] = sizeof(ocall_up);
+	pta_up.types = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INOUT,
+				       TEE_PARAM_TYPE_MEMREF_INOUT,
+				       TEE_PARAM_TYPE_NONE,
+				       TEE_PARAM_TYPE_NONE);
+
+	/* Send the OCALL request */
+	res = utee_invoke_ta_command((uintptr_t)tee_api_system_session,
+				     cancellationRequestTimeout,
+				     PTA_SYSTEM_OCALL,
+				     &pta_up,
+				     &ret_origin);
+	if (res != TEE_SUCCESS)
+		goto exit;
+
+	/* Convert the utee_params structure into the OCALL's parameters */
+	for (n = 0; n < TEE_NUM_PARAMS; n++) {
+		switch (TEE_PARAM_TYPE_GET(paramTypes, n)) {
+		case TEE_PARAM_TYPE_VALUE_OUTPUT:
+		case TEE_PARAM_TYPE_VALUE_INOUT:
+			params[n].value.a = ocall_up.vals[n * 2];
+			params[n].value.b = ocall_up.vals[n * 2 + 1];
+			break;
+		case TEE_PARAM_TYPE_MEMREF_OUTPUT:
+		case TEE_PARAM_TYPE_MEMREF_INOUT:
+			buffer = (void *)(uintptr_t)ocall_up.vals[n * 2];
+			size = ocall_up.vals[n * 2 + 1];
+			if (buffer != params[n].memref.buffer ||
+			    size > params[n].memref.size) {
+				res = TEE_ERROR_BAD_PARAMETERS;
+				ret_origin = TEE_ORIGIN_API;
+				goto exit;
+			}
+			params[n].memref.size = size;
+			break;
+		default:
+			break;
+		}
+	}
+
+	/* Extract the OCALL return value and error origin */
+	res = (TEE_Result)pta_up.vals[0];
+	ret_origin = (uint32_t)pta_up.vals[1];
+
+exit:
+	/* The PTA is a communications conduit to normal world */
+	if (ret_origin == TEE_ORIGIN_TRUSTED_APP)
+		ret_origin = TEE_ORIGIN_COMMS;
+
+	if (returnOrigin)
+		*returnOrigin = ret_origin;
+
+	if (ret_origin == TEE_ORIGIN_TEE &&
+	    (res != TEE_SUCCESS ||
+	     res != TEE_ERROR_OUT_OF_MEMORY ||
+	     res != TEE_ERROR_TARGET_DEAD))
+		TEE_Panic(res);
+
+	return res;
+}
+#else
+TEE_Result TEE_InvokeCACommand(uint32_t cancellationRequestTimeout,
+			       uint32_t commandID, uint32_t paramTypes,
+			       TEE_Param params[TEE_NUM_PARAMS],
+			       uint32_t *returnOrigin)
+{
+	return TEE_ERROR_NOT_IMPLEMENTED;
+}
+#endif /*CFG_OCALL*/
 
 /* System API - Cancellations */
 

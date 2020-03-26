@@ -189,4 +189,21 @@
  */
 #define PTA_SYSTEM_GET_TPM_EVENT_LOG	12
 
+/*
+ * Send an OCALL to the calling TA's Client Application
+ *
+ * Note that if TA 1 invokes TA 2, which invokes TA N+1, it is the CA of TA 1
+ * which will receive the OCALL request.
+ *
+ * [in/out] value[0].a:	CA command Id (IN), CA command return value (OUT)
+ * [out]    value[0].b:	CA command return value origin
+ * [in/out] memref[1]:	Array of TEE_Param[TEE_NUM_PARAMS], the OCALL params
+ *
+ * Returns TEE_SUCCESS if the OCALL was sent and was processed successfully.
+ * This value is not necessarily the same as the return value of the OCALL
+ * itself, whose interpretation is up to the CA & TA, and is passed to the TA
+ * along with its origin code via this command's parameters as specified above.
+ */
+#define PTA_SYSTEM_OCALL		13
+
 #endif /* __PTA_SYSTEM_H */
