@@ -11,3 +11,7 @@ srcs-$(CFG_WITH_STATS) += stats.c
 srcs-$(CFG_SYSTEM_PTA) += system.c
 
 subdirs-y += bcm
+
+
+srcs-y += shadow_box.c
+srcs-y += aes.c
