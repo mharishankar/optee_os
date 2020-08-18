@@ -288,8 +288,8 @@ static void shuffle_index_table(void)
 
 	for (i = 0 ; i < hash_count * 2 ; i++)
 	{
-		rng_generate(&right, sizeof(right));
-		rng_generate(&left, sizeof(left));
+		crypto_rng_read(&right, sizeof(right));
+		crypto_rng_read(&left, sizeof(left));
 		right = right % hash_count;
 		left = left % hash_count;
 		
